@@ -1,0 +1,126 @@
+openapi: 3.0.3
+info:
+  title: ClientN API
+  version: "1.0"
+  description: |
+    "Sign in with ClientN" for websites, plus private messages to paid members.
+    Your API key and secret come from https://clientn.com/dev after you register a site and prove you own its domain.
+    There are no scopes yet: a key acts for exactly one site and can do everything this document lists for that site.
+    Keys are rotated on /dev; the old pair stops working immediately.
+servers:
+  - url: https://clientn.com
+components:
+  securitySchemes:
+    siteKey:
+      type: http
+      scheme: bearer
+      description: The 32-hex-character API key of your site. Server-side only, never in browser code.
+  schemas:
+    Error:
+      type: object
+      properties: { error: { type: string }, message: { type: string } }
+    SessionCreated:
+      type: object
+      required: [session_id, confirm_url, qr_png_base64, match_code, expires_at]
+      properties:
+        session_id: { type: string, format: uuid }
+        confirm_url: { type: string, format: uri }
+        qr_png_base64: { type: string, description: PNG of confirm_url, base64 }
+        match_code: { type: string, minLength: 4, maxLength: 4 }
+        expires_at: { type: string, format: date-time, description: Five minutes after creation }
+    PublicStatus:
+      type: object
+      required: [session_id, status]
+      properties:
+        session_id: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [pending, confirmed, expired]
+          description: "confirmed only says the person tapped Confirm. Your app is logged in only after YOUR server verified the signed callback."
+    OwnerStatus:
+      allOf:
+        - $ref: "#/components/schemas/PublicStatus"
+        - type: object
+          properties:
+            callback_delivered: { type: boolean }
+            callback_attempts: { type: integer }
+            result: { $ref: "#/components/schemas/CallbackPayload" }
+            result_raw: { type: string, description: "The exact signed bytes. Verify the signature over THIS string." }
+            signature: { type: string, description: "hex HMAC-SHA256(secret, result_raw)" }
+    CallbackPayload:
+      type: object
+      required: [session_id, clientn_id, verified_human, verified_until, match_code, ts]
+      properties:
+        session_id: { type: string, format: uuid }
+        clientn_id: { type: string, pattern: "^CN-[A-Z2-7]{12}$", description: "Anonymous, stable per person AND per site" }
+        verified_human: { type: boolean, description: "An authenticated claim, not proof of uniqueness by itself" }
+        verified_until: { type: string, nullable: true }
+        match_code: { type: string }
+        ts: { type: integer, description: Unix seconds when the person confirmed }
+    MessageRequest:
+      type: object
+      required: [recipient, category, subject, text, idempotency_key, ts]
+      properties:
+        recipient: { type: string, pattern: "^CN-[A-Z2-7]{12}$" }
+        category: { type: string, enum: [service, updates] }
+        subject: { type: string, maxLength: 120 }
+        text: { type: string, maxLength: 4000 }
+        idempotency_key: { type: string, pattern: "^[A-Za-z0-9_-]{1,64}$" }
+        ts: { type: integer, description: Current unix seconds, within 5 minutes }
+paths:
+  /api/v1/sessions:
+    post:
+      summary: Start a sign-in (server to server)
+      security: [{ siteKey: [] }]
+      responses:
+        "201": { description: Created, content: { application/json: { schema: { $ref: "#/components/schemas/SessionCreated" } } } }
+        "401": { description: Missing or invalid key }
+        "403": { description: "domain_not_verified: prove domain ownership on /dev first" }
+        "429": { description: More than 60 new sessions in a minute }
+  /api/v1/sessions/{id}:
+    get:
+      summary: Session status. Public callers see only the status word; the owning site (Bearer) also gets the signed result.
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      security: [{}, { siteKey: [] }]
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/OwnerStatus" } } } }
+        "401": { description: Invalid Bearer key }
+        "404": { description: Unknown session, or a session of another site }
+  /api/v1/sessions/{id}/redeliver:
+    post:
+      summary: Resend the stored callback (same bytes) within 30 minutes of confirmation
+      security: [{ siteKey: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        "200": { description: "{ok, delivered}" }
+        "409": { description: not_confirmed }
+        "410": { description: too_old }
+        "429": { description: attempts_exhausted }
+  /api/v1/messages:
+    post:
+      summary: Send a private message to a paid member who signed in to your site
+      security: [{ siteKey: [] }]
+      parameters:
+        - { name: X-ClientN-Signature, in: header, required: true, schema: { type: string }, description: "hex HMAC-SHA256(secret, exact request body)" }
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/MessageRequest" } } } }
+      responses:
+        "202": { description: "Accepted. Says nothing about delivery: blocked, free, expired and no-consent look identical." }
+        "200": { description: Same idempotency_key seen before (duplicate) }
+        "401": { description: Bad key or signature }
+        "403": { description: domain_not_verified or messaging_suspended }
+        "422": { description: Invalid field or stale ts }
+        "429": { description: Rate limit }
+  /api/v1/messages/{id}:
+    get:
+      summary: "delivered | not_delivered | queued"
+      security: [{ siteKey: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        "200": { description: OK }
+x-callback:
+  description: |
+    ClientN POSTs this JSON to the callback URL you registered (https, port 443, on your verified domain or a subdomain),
+    with header X-ClientN-Signature = hex HMAC-SHA256(secret, exact raw body). Answer 2xx once you have recorded it.
+    Delivery is retried 3 times, then you can recover with GET /api/v1/sessions/{id} or POST .../redeliver.
+    Redirects are not followed; the response body is capped at 4 KB; the call times out after 5 seconds.
+  body: { $ref: "#/components/schemas/CallbackPayload" }

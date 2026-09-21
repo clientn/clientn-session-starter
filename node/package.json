@@ -1,0 +1,13 @@
+{
+  "name": "clientn-session-starter-node",
+  "version": "1.0.0",
+  "description": "Reference 'Sign in with ClientN' integration for Node.js (no runtime dependencies)",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "engines": { "node": ">=22.5" },
+  "scripts": {
+    "start": "node --no-warnings src/server.mjs",
+    "test": "node --no-warnings --test test/*.test.mjs"
+  }
+}

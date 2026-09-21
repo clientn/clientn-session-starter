@@ -1,0 +1,9 @@
+.env
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+node_modules/
+node/data/
+php/data/*
+!php/data/.gitkeep
+vendor/
