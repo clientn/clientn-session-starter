@@ -26,9 +26,12 @@ export function createApp(cfg, store, api = { createClientNSession, getClientNSe
     res.writeHead(code, { ...baseHeaders, 'Content-Type': type, 'Cache-Control': 'no-store', ...extra });
     res.end(type === 'application/json' ? JSON.stringify(body) : body);
   }
+  // Sec-Fetch-Site is set by the browser and cannot be forged by a web page. Origin can be the string "null"
+  // even for same-origin form posts when Referrer-Policy is no-referrer, so it is only a fallback.
   const sameOrigin = req => {
-    const o = req.headers.origin, s = req.headers['sec-fetch-site'];
-    return o === cfg.appOrigin || (!o && (s === 'same-origin'));
+    const s = req.headers['sec-fetch-site'];
+    if (s !== undefined) return s === 'same-origin';
+    return req.headers.origin === cfg.appOrigin;
   };
   async function readRaw(req, max) {
     const chunks = []; let n = 0;

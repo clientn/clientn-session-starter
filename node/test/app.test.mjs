@@ -41,6 +41,15 @@ test('start: refuses a cross-site request (login CSRF)', async () => {
   app.close();
 });
 
+test('same-origin check: trusts Sec-Fetch-Site, tolerates Origin: null from no-referrer form posts, refuses cross-site', async () => {
+  const app = await boot();
+  assert.equal((await start(app, { 'Sec-Fetch-Site': 'same-origin', Origin: 'null' })).status, 201);
+  assert.equal((await start(app, { 'Sec-Fetch-Site': 'cross-site', Origin: ORIGIN })).status, 403);
+  assert.equal((await start(app, { 'Sec-Fetch-Site': 'same-site' })).status, 403);
+  assert.equal((await start(app, { Origin: 'null' })).status, 403);
+  app.close();
+});
+
 test('start: pending cookie is HttpOnly + SameSite, and the API key never reaches the browser', async () => {
   const app = await boot();
   const { res, j } = await begin(app);

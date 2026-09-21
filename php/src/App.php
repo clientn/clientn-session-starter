@@ -34,8 +34,11 @@ final class App
     }
     private function sameOrigin(array $req): bool
     {
-        $o = $req['headers']['origin'] ?? null; $s = $req['headers']['sec-fetch-site'] ?? null;
-        return $o === $this->cfg['appOrigin'] || ($o === null && $s === 'same-origin');
+        // Sec-Fetch-Site is set by the browser and cannot be forged by a web page. Origin can be the string "null"
+        // even for same-origin form posts when Referrer-Policy is no-referrer, so it is only a fallback.
+        $s = $req['headers']['sec-fetch-site'] ?? null;
+        if ($s !== null) { return $s === 'same-origin'; }
+        return ($req['headers']['origin'] ?? null) === $this->cfg['appOrigin'];
     }
     private function hmacOk(string $raw, mixed $sig): bool
     {

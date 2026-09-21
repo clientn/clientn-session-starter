@@ -38,6 +38,11 @@ $b = begin($app, $api);
 $setc = $b['res']['cookies'][0] ?? '';
 t('start: 201 + pending cookie HttpOnly + SameSite', $b['res']['code'] === 201 && str_contains($setc, 'HttpOnly') && str_contains($setc, 'SameSite=Lax'));
 t('start: API key never reaches the browser; only the allowed fields are returned', !str_contains($b['res']['body'], $KEY) && array_keys($b['j']) === ['session_id', 'confirm_url', 'qr_png_base64', 'match_code', 'expires_at']);
+t('same-origin check: Sec-Fetch-Site wins, Origin: null tolerated from no-referrer form posts, cross-site refused',
+  $app->handle(req('POST', '/clientn/session', ['headers' => ['sec-fetch-site' => 'same-origin', 'origin' => 'null']]))['code'] === 201
+  && $app->handle(req('POST', '/clientn/session', ['headers' => ['sec-fetch-site' => 'cross-site', 'origin' => $ORIGIN]]))['code'] === 403
+  && $app->handle(req('POST', '/clientn/session', ['headers' => ['sec-fetch-site' => 'same-site']]))['code'] === 403
+  && $app->handle(req('POST', '/clientn/session', ['headers' => ['origin' => 'null']]))['code'] === 403);
 [$sapp, , $sapi] = boot(['appOrigin' => 'https://app.example', 'secureCookies' => true]);
 $sr = $sapp->handle(req('POST', '/clientn/session', ['headers' => ['origin' => 'https://app.example']]));
 t('secure deployment: __Host- cookie with Secure and Path=/', preg_match('/^__Host-cn_pending=.*; Path=\/;.*; Secure/', $sr['cookies'][0]) === 1);
