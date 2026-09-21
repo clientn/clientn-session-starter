@@ -144,5 +144,5 @@ export function createApp(cfg, store, api = { createClientNSession, getClientNSe
 if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {
   const cfg = loadConfig(); assertConfig(cfg);
   const store = openStore(cfg.dbPath);
-  http.createServer(createApp(cfg, store)).listen(cfg.port, () => console.log(`listening on ${cfg.port} as ${cfg.appOrigin}`));
+  http.createServer(createApp(cfg, store)).listen(cfg.port, cfg.host, () => console.log(`listening on ${cfg.host}:${cfg.port} as ${cfg.appOrigin}`));
 }

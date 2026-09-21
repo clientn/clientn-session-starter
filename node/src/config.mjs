@@ -14,6 +14,7 @@ export function loadConfig(env = process.env) {
     apiKey: env.CLIENTN_API_KEY || '',
     apiSecret: env.CLIENTN_API_SECRET || '',
     appOrigin: (env.APP_ORIGIN || 'http://localhost:3000').replace(/\/+$/, ''),
+    host: env.HOST || '127.0.0.1',
     port: Number(env.PORT || 3000),
     dbPath: env.DB_PATH || './data/app.sqlite',
   };
