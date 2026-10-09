@@ -17,7 +17,8 @@ export function openStore(path) {
       created_at INTEGER NOT NULL,           -- unix seconds
       expires_at INTEGER NOT NULL,
       status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','confirmed','consumed')),
-      clientn_id TEXT, verified_human INTEGER, verified_until TEXT
+      clientn_id TEXT, verified_human INTEGER, verified_until TEXT,
+      verifier TEXT                          -- redirect flow only: PKCE code_verifier, server-side, bound to this browser's token
     );
     CREATE TABLE IF NOT EXISTS users (
       clientn_id TEXT PRIMARY KEY, first_seen INTEGER NOT NULL, last_login INTEGER NOT NULL, verified_human INTEGER NOT NULL DEFAULT 0
@@ -26,8 +27,12 @@ export function openStore(path) {
       id_hash TEXT PRIMARY KEY, clientn_id TEXT NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL
     );
   `);
+  try { db.exec('ALTER TABLE pending_logins ADD COLUMN verifier TEXT'); } catch { /* already there */ }
   const q = {
-    insPending: db.prepare('INSERT INTO pending_logins (token_hash, session_id, created_at, expires_at) VALUES (?,?,?,?)'),
+    insPending: db.prepare('INSERT INTO pending_logins (token_hash, session_id, created_at, expires_at, verifier) VALUES (?,?,?,?,?)'),
+    // redirect flow: the ONE atomic claim of this browser's pending row before the code is exchanged
+    claimRedirect: db.prepare(`UPDATE pending_logins SET status='consumed'
+                               WHERE token_hash=? AND session_id=? AND verifier IS NOT NULL AND status='pending' AND expires_at + 30 >= ?`),
     byToken: db.prepare('SELECT * FROM pending_logins WHERE token_hash = ?'),
     bySession: db.prepare('SELECT * FROM pending_logins WHERE session_id = ?'),
     // the ONE atomic transition: pending -> confirmed, only if still pending and inside the window
@@ -45,9 +50,9 @@ export function openStore(path) {
   const now = () => Math.floor(Date.now() / 1000);
   return {
     db,
-    createPending(sessionId, ttl = 300) {
+    createPending(sessionId, ttl = 300, verifier = null) {
       const token = newToken(), t = now();
-      q.insPending.run(sha256(token), sessionId, t, t + ttl);
+      q.insPending.run(sha256(token), sessionId, t, t + ttl, verifier);
       q.purge.run(t - 3600);
       return { token, createdAt: t, expiresAt: t + ttl };
     },
@@ -57,6 +62,12 @@ export function openStore(path) {
       return q.confirm.run(ev.clientnId, ev.verifiedHuman ? 1 : 0, ev.verifiedUntil, sessionId, t).changes === 1;
     },
     consumePending: token => q.consume.run(sha256(token)).changes === 1,
+    /** Redirect flow: returns the row (with its verifier) only to the browser that started this session, once. */
+    claimRedirect(token, sessionId, t = now()) {
+      const row = q.byToken.get(sha256(token));
+      if (!row || row.session_id !== sessionId) return null;
+      return q.claimRedirect.run(sha256(token), sessionId, t).changes === 1 ? row : null;
+    },
     startAppSession(clientnId, verifiedHuman, ttl = 7 * 86400) {
       const t = now();
       q.upsertUser.run(clientnId, t, t, verifiedHuman ? 1 : 0);

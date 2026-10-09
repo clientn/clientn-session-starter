@@ -19,11 +19,20 @@ components:
     Error:
       type: object
       properties: { error: { type: string }, message: { type: string } }
+    SessionCreate:
+      type: object
+      properties:
+        flow: { type: string, enum: [qr, redirect], default: qr, description: "redirect = same device (recommended); qr = a phone confirms for a computer" }
+        return_url: { type: string, format: uri, description: "redirect flow: https URL on your verified domain; ClientN appends cn_session and cn_code" }
+        code_challenge: { type: string, pattern: "^[A-Za-z0-9_-]{43}$", description: "redirect flow: base64url(SHA-256(code_verifier))" }
+        end_user_ip: { type: string, description: "Your visitor's IP. Shown to the person only as a country." }
+        end_user_agent: { type: string, maxLength: 300, description: "Your visitor's browser. Shown only as e.g. 'Chrome on Windows'." }
     SessionCreated:
       type: object
-      required: [session_id, confirm_url, qr_png_base64, match_code, expires_at]
+      required: [session_id, flow, confirm_url, qr_png_base64, match_code, expires_at]
       properties:
         session_id: { type: string, format: uuid }
+        flow: { type: string, enum: [qr, redirect] }
         confirm_url: { type: string, format: uri }
         qr_png_base64: { type: string, description: PNG of confirm_url, base64 }
         match_code: { type: string, minLength: 4, maxLength: 4 }
@@ -35,16 +44,17 @@ components:
         session_id: { type: string, format: uuid }
         status:
           type: string
-          enum: [pending, confirmed, expired]
-          description: "confirmed only says the person tapped Confirm. Your app is logged in only after YOUR server verified the signed callback."
+          enum: [pending, confirmed, used, expired, denied]
+          description: "confirmed only says the person approved with a passkey. Your app is logged in only after YOUR server verified the signed result. denied = the person pressed This wasn't me or picked a wrong code."
     OwnerStatus:
       allOf:
         - $ref: "#/components/schemas/PublicStatus"
         - type: object
           properties:
+            flow: { type: string, enum: [qr, redirect] }
             callback_delivered: { type: boolean }
             callback_attempts: { type: integer }
-            result: { $ref: "#/components/schemas/CallbackPayload" }
+            result: { $ref: "#/components/schemas/CallbackPayload", description: "QR flow only; redirect-flow results come from /exchange" }
             result_raw: { type: string, description: "The exact signed bytes. Verify the signature over THIS string." }
             signature: { type: string, description: "hex HMAC-SHA256(secret, result_raw)" }
     CallbackPayload:
@@ -72,10 +82,12 @@ paths:
     post:
       summary: Start a sign-in (server to server)
       security: [{ siteKey: [] }]
+      requestBody: { required: false, content: { application/json: { schema: { $ref: "#/components/schemas/SessionCreate" } } } }
       responses:
         "201": { description: Created, content: { application/json: { schema: { $ref: "#/components/schemas/SessionCreated" } } } }
         "401": { description: Missing or invalid key }
         "403": { description: "domain_not_verified: prove domain ownership on /dev first" }
+        "422": { description: "bad_return_url or bad_code_challenge (redirect flow)" }
         "429": { description: More than 60 new sessions in a minute }
   /api/v1/sessions/{id}:
     get:
@@ -86,6 +98,19 @@ paths:
         "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/OwnerStatus" } } } }
         "401": { description: Invalid Bearer key }
         "404": { description: Unknown session, or a session of another site }
+  /api/v1/sessions/{id}/exchange:
+    post:
+      summary: "Redirect flow: trade the one-time code (from your return_url) and your code_verifier for the signed result. Works once, within 2 minutes."
+      security: [{ siteKey: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [code, code_verifier], properties: { code: { type: string }, code_verifier: { type: string } } } } }
+      responses:
+        "200": { description: "{session_id, status: used, result, result_raw, signature}" }
+        "403": { description: mismatch }
+        "409": { description: "not_exchangeable (already used, not confirmed, or a QR session)" }
+        "410": { description: code_expired }
   /api/v1/sessions/{id}/redeliver:
     post:
       summary: Resend the stored callback (same bytes) within 30 minutes of confirmation

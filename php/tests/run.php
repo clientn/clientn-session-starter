@@ -13,9 +13,14 @@ function sign(string $raw): string { global $SECRET; return hash_hmac('sha256', 
 function ev(string $sid, array $o = []): string { return json_encode($o + ['session_id' => $sid, 'clientn_id' => 'CN-ABCDEFGHIJKL', 'verified_human' => false, 'verified_until' => null, 'match_code' => 'AB3K', 'ts' => time()]); }
 
 class FakeApi extends ClientN {
-    public ?string $last = null; public $getter = null;
+    public ?string $last = null; public $getter = null; public array $opts = []; public array $exchanges = []; public $exchanger = null;
     public function __construct() {}
-    public function createSession(): array { $this->last = sid(); return ['session_id' => $this->last, 'confirm_url' => 'https://clientn.example/s/x', 'qr_png_base64' => 'AAAA', 'match_code' => 'AB3K', 'expires_at' => 'x', 'api_key_leak' => $GLOBALS['KEY']]; }
+    public function exchange(string $sessionId, string $code, string $verifier): array {
+        $this->exchanges[] = [$sessionId, $code, $verifier];
+        if ($this->exchanger) { return ($this->exchanger)($sessionId); }
+        $raw = ev($sessionId); return ['status' => 200, 'body' => ['result_raw' => $raw, 'signature' => sign($raw)]];
+    }
+    public function createSession(array $opts = []): array { $this->opts = $opts; $this->last = sid(); return ['session_id' => $this->last, 'confirm_url' => 'https://clientn.example/s/x', 'qr_png_base64' => 'AAAA', 'match_code' => 'AB3K', 'expires_at' => 'x', 'api_key_leak' => $GLOBALS['KEY']]; }
     public function getSession(string $sessionId): array { return $this->getter ? ($this->getter)($sessionId) : ['status' => 404, 'body' => ['error' => 'not_found']]; }
 }
 function boot(array $over = []): array {
@@ -37,7 +42,7 @@ t('start: cross-site request refused (login CSRF)', $app->handle(req('POST', '/c
 $b = begin($app, $api);
 $setc = $b['res']['cookies'][0] ?? '';
 t('start: 201 + pending cookie HttpOnly + SameSite', $b['res']['code'] === 201 && str_contains($setc, 'HttpOnly') && str_contains($setc, 'SameSite=Lax'));
-t('start: API key never reaches the browser; only the allowed fields are returned', !str_contains($b['res']['body'], $KEY) && array_keys($b['j']) === ['session_id', 'confirm_url', 'qr_png_base64', 'match_code', 'expires_at']);
+t('start: API key never reaches the browser; only the allowed fields are returned', !str_contains($b['res']['body'], $KEY) && array_keys($b['j']) === ['session_id', 'flow', 'confirm_url', 'qr_png_base64', 'match_code', 'expires_at']);
 t('same-origin check: Sec-Fetch-Site wins, Origin: null tolerated from no-referrer form posts, cross-site refused',
   $app->handle(req('POST', '/clientn/session', ['headers' => ['sec-fetch-site' => 'same-origin', 'origin' => 'null']]))['code'] === 201
   && $app->handle(req('POST', '/clientn/session', ['headers' => ['sec-fetch-site' => 'cross-site', 'origin' => $ORIGIN]]))['code'] === 403
@@ -106,6 +111,32 @@ $app->handle(req('POST', '/logout', ['cookies' => ['app_session' => $sess], 'hea
 t('logout: session ended', str_contains($app->handle(req('GET', '/', ['cookies' => ['app_session' => $sess]]))['body'], 'clientn-signin'));
 $h = $app->handle(req('GET', '/'))['headers'];
 t('pages send CSP + nosniff + frame protection', str_contains($h['Content-Security-Policy'], "frame-ancestors 'none'") && $h['X-Content-Type-Options'] === 'nosniff');
+
+
+// --- redirect flow (same device, PKCE-bound)
+function beginR(App $app, FakeApi $api): array { global $ORIGIN; $r = $app->handle(req('POST', '/clientn/session', ['headers' => ['origin' => $ORIGIN], 'body' => '{"flow":"redirect"}'])); return ['res' => $r, 'sid' => $api->last, 'tok' => cookieVal($r, 'cn_pending'), 'j' => json_decode($r['body'], true)]; }
+function back(App $app, string $sid, ?string $tok): array { return $app->handle(req('GET', '/clientn/return', ['query' => ['cn_session' => $sid, 'cn_code' => str_repeat('A', 43)], 'cookies' => $tok ? ['cn_pending' => $tok] : []])); }
+[$app, $store, $api] = boot();
+$r = beginR($app, $api);
+$row = $store->pendingBySession($r['sid']);
+t('redirect: start sends return_url + code_challenge = SHA-256(verifier), returns no QR, never the verifier',
+  $r['res']['code'] === 201 && array_keys($r['j']) === ['session_id', 'flow', 'confirm_url'] && $api->opts['flow'] === 'redirect'
+  && $api->opts['return_url'] === $ORIGIN . '/clientn/return'
+  && $api->opts['code_challenge'] === rtrim(strtr(base64_encode(hash('sha256', $row['verifier'], true)), '+/', '-_'), '=')
+  && !str_contains($r['res']['body'], $row['verifier']));
+$b1 = back($app, $r['sid'], $r['tok']);
+t('redirect: the starting browser is signed in (303 /, app session cookie)', $b1['code'] === 303 && ($b1['headers']['Location'] ?? '') === '/' && (string)cookieVal($b1, 'app_session') !== '');
+$b2 = back($app, $r['sid'], $r['tok']);
+t('redirect: replaying the return URL fails', ($b2['headers']['Location'] ?? '') === '/?signin=failed');
+[$app, $store, $api] = boot();
+$a = beginR($app, $api); $other = beginR($app, $api);
+$n1 = back($app, $a['sid'], null); $n2 = back($app, $a['sid'], $other['tok']);
+t("redirect: a forwarded link (no cookie / another browser's cookie) never reaches the exchange",
+  ($n1['headers']['Location'] ?? '') === '/?signin=failed' && ($n2['headers']['Location'] ?? '') === '/?signin=failed' && count($api->exchanges) === 0);
+[$app, $store, $api] = boot();
+$api->exchanger = fn($sid) => ['status' => 200, 'body' => ['result_raw' => ev($sid), 'signature' => str_repeat('f', 64)]];
+$c = beginR($app, $api); $bad = back($app, $c['sid'], $c['tok']);
+t('redirect: a badly signed exchange answer is refused', ($bad['headers']['Location'] ?? '') === '/?signin=failed' && cookieVal($bad, 'app_session') === null);
 
 echo "\n$pass passed, $fail failed\n";
 if ($fail) { exit(1); }

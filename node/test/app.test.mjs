@@ -57,7 +57,7 @@ test('start: pending cookie is HttpOnly + SameSite, and the API key never reache
   const raw = res.headers.getSetCookie().find(c => c.startsWith('cn_pending='));
   assert.match(raw, /HttpOnly/); assert.match(raw, /SameSite=Lax/);
   assert.ok(!JSON.stringify(j).includes(KEY) && !('api_key_leak' in j));
-  assert.deepEqual(Object.keys(j).sort(), ['confirm_url', 'expires_at', 'match_code', 'qr_png_base64', 'session_id']);
+  assert.deepEqual(Object.keys(j).sort(), ['confirm_url', 'expires_at', 'flow', 'match_code', 'qr_png_base64', 'session_id']);
   app.close();
 });
 
@@ -216,4 +216,67 @@ test('clientn.mjs: sends the Bearer key, refuses non-201, never follows redirect
   await assert.rejects(() => getClientNSession(c, 'redir'));
   await assert.rejects(() => createClientNSession({ ...c, apiBase: c.apiBase + '/nope' }));
   fake.close(); fake.closeAllConnections?.();
+});
+
+// ---------------- redirect flow (same device, PKCE-bound) ----------------
+import { createHash } from 'node:crypto';
+function redirectStub(over = {}) {
+  const calls = { create: [], exchange: [] };
+  const api = {
+    createClientNSession: async (c, opts) => { calls.create.push(opts); return { session_id: nextSessionId(), flow: opts.flow, confirm_url: 'https://clientn.example/s/x', qr_png_base64: 'AAAA', match_code: 'AB3K', expires_at: 'x' }; },
+    getClientNSession: async () => ({ status: 404, body: {} }),
+    exchangeClientNSession: async (c, sid, code, verifier) => {
+      calls.exchange.push({ sid, code, verifier });
+      const raw = event(sid);
+      return over.exchange ? over.exchange(sid, raw) : { status: 200, body: { result_raw: raw, signature: sign(raw) } };
+    },
+  };
+  return { api, calls };
+}
+const startRedirect = app => fetch(app.base + '/clientn/session', { method: 'POST', headers: { Origin: ORIGIN, 'Content-Type': 'application/json' }, body: JSON.stringify({ flow: 'redirect' }) });
+const ret = (app, sid, cookie, code = 'A'.repeat(43)) => fetch(`${app.base}/clientn/return?cn_session=${sid}&cn_code=${code}`, { redirect: 'manual', headers: cookie ? { Cookie: cookie } : {} });
+
+test('redirect: start sends return_url + code_challenge = SHA-256(verifier) and returns no QR', async () => {
+  const { api, calls } = redirectStub();
+  const app = await boot({}, api);
+  const res = await startRedirect(app); const j = await res.json();
+  assert.equal(res.status, 201); assert.equal(j.flow, 'redirect');
+  assert.deepEqual(Object.keys(j).sort(), ['confirm_url', 'flow', 'session_id']);
+  const o = calls.create[0];
+  assert.equal(o.flow, 'redirect'); assert.equal(o.return_url, ORIGIN + '/clientn/return');
+  const row = app.store.pendingBySession(j.session_id);
+  assert.equal(o.code_challenge, createHash('sha256').update(row.verifier).digest('base64url'));
+  assert.ok(!JSON.stringify(j).includes(row.verifier));
+  app.close();
+});
+
+test('redirect: the starting browser is signed in once; replay fails', async () => {
+  const { api } = redirectStub();
+  const app = await boot({}, api);
+  const res = await startRedirect(app); const j = await res.json(); const cookie = cookieOf(res, 'cn_pending');
+  const r1 = await ret(app, j.session_id, cookie);
+  assert.equal(r1.status, 303); assert.equal(r1.headers.get('location'), '/'); assert.ok(cookieOf(r1, 'app_session'));
+  const r2 = await ret(app, j.session_id, cookie);
+  assert.equal(r2.headers.get('location'), '/?signin=failed');
+  app.close();
+});
+
+test('redirect: a forwarded link (no pending cookie, or another browser\'s cookie) never reaches the exchange', async () => {
+  const { api, calls } = redirectStub();
+  const app = await boot({}, api);
+  const a = await startRedirect(app); const ja = await a.json();
+  const b = await startRedirect(app); const cookieB = cookieOf(b, 'cn_pending');
+  assert.equal((await ret(app, ja.session_id, null)).headers.get('location'), '/?signin=failed');
+  assert.equal((await ret(app, ja.session_id, cookieB)).headers.get('location'), '/?signin=failed');
+  assert.equal(calls.exchange.length, 0);
+  app.close();
+});
+
+test('redirect: a badly signed exchange answer is refused', async () => {
+  const { api } = redirectStub({ exchange: (sid, raw) => ({ status: 200, body: { result_raw: raw, signature: 'f'.repeat(64) } }) });
+  const app = await boot({}, api);
+  const res = await startRedirect(app); const j = await res.json();
+  const r = await ret(app, j.session_id, cookieOf(res, 'cn_pending'));
+  assert.equal(r.headers.get('location'), '/?signin=failed'); assert.ok(!cookieOf(r, 'app_session'));
+  app.close();
 });

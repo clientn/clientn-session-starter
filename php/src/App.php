@@ -101,10 +101,44 @@ final class App
                 $hits = array_values(array_filter($this->startHits[$ip] ?? [], fn($x) => $x > $t - 60));
                 if (count($hits) >= 10) { return $this->out(429, ['error' => 'rate_limited']); }
                 $this->startHits[$ip] = [...$hits, $t];     // per-process only: use your real shared rate limiter in production
-                $s = $this->api->createSession();
-                $p = $this->store->createPending($s['session_id']);
-                $body = array_intersect_key($s, array_flip(['session_id', 'confirm_url', 'qr_png_base64', 'match_code', 'expires_at']));
+                // {"flow":"redirect"} = same device (the button's default); {"flow":"qr"} or no body = phone confirms by QR
+                $in = json_decode(substr((string)$req['body'], 0, 1024), true);
+                $flow = (is_array($in) && ($in['flow'] ?? '') === 'redirect') ? 'redirect' : 'qr';
+                // tell ClientN which device asked, so the person sees "Chrome on Windows · Egypt" on the confirm page
+                $opts = ['flow' => $flow, 'end_user_ip' => $req['ip'] ?? null, 'end_user_agent' => substr((string)($req['headers']['user-agent'] ?? ''), 0, 300)];
+                $verifier = null;
+                if ($flow === 'redirect') {
+                    $verifier = Store::token();                                   // stays on this server, bound to this browser
+                    $opts['return_url'] = $this->cfg['appOrigin'] . '/clientn/return';
+                    $opts['code_challenge'] = rtrim(strtr(base64_encode(hash('sha256', $verifier, true)), '+/', '-_'), '=');
+                }
+                $s = $this->api->createSession($opts);
+                $p = $this->store->createPending($s['session_id'], 300, $verifier);
+                $s['flow'] = $flow;
+                $keys = $flow === 'redirect' ? ['session_id', 'flow', 'confirm_url'] : ['session_id', 'flow', 'confirm_url', 'qr_png_base64', 'match_code', 'expires_at'];
+                $body = [];
+                foreach ($keys as $k) { $body[$k] = $s[$k] ?? null; }
                 return $this->out(201, $body, 'application/json', [], [$this->cookie($this->pendingName, $p['token'], 600)]);
+            }
+
+            // 1b. redirect flow: ClientN sends the browser back with a one-time code. Only the browser holding the
+            //     pending cookie has the verifier, so a forwarded confirm link signs nobody in.
+            if ($m === 'GET' && $path === '/clientn/return') {
+                $fail = fn() => $this->out(303, '', 'text/plain', ['Location' => '/?signin=failed'], [$this->cookie($this->pendingName, '', 0)]);
+                $q = $req['query'] ?? [];
+                $sid = (string)($q['cn_session'] ?? ''); $code = (string)($q['cn_code'] ?? '');
+                $token = $ck[$this->pendingName] ?? null;
+                if (!$token || !preg_match('/\A[0-9a-f-]{36}\z/', $sid) || !preg_match('/\A[A-Za-z0-9_-]{20,64}\z/', $code)) { return $fail(); }
+                $row = $this->store->claimRedirect($token, $sid);
+                if (!$row) { return $fail(); }
+                $r = $this->api->exchange($sid, $code, (string)$row['verifier']);
+                if ($r['status'] !== 200 || !is_string($r['body']['result_raw'] ?? null) || !is_string($r['body']['signature'] ?? null)) { return $fail(); }
+                try {
+                    $ev = verifyClientNCallback($r['body']['result_raw'], $r['body']['signature'], $this->cfg['apiSecret'],
+                        ['sessionId' => $sid, 'createdAt' => (int)$row['created_at'], 'expiresAt' => (int)$row['expires_at']]);
+                } catch (Throwable) { return $fail(); }
+                $appSid = $this->store->startAppSession($ev['clientnId'], (bool)$ev['verifiedHuman']);      // fresh session id
+                return $this->out(303, '', 'text/plain', ['Location' => '/'], [$this->cookie($this->sessionName, $appSid, 604800), $this->cookie($this->pendingName, '', 0)]);
             }
 
             // 2. callback from ClientN (server to server; no cookies, exact raw bytes are signed)

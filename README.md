@@ -10,13 +10,18 @@ ClientN gives your visitors an anonymous, per-site ID (`CN-…`) after they conf
 
 ## How it works
 
-1. Your server calls `POST /api/v1/sessions` with your API key. ClientN returns a session id, a confirm URL, a QR code and a 4-character match code.
-2. Your server stores a **pending login bound to this browser** (random token in an HttpOnly cookie, only its hash in your database) and returns the QR/code to the page. `clientn.js` shows them.
-3. The person opens the confirm URL (same device link or QR with a phone), checks the match code and the site name, and confirms with their passkey.
-4. ClientN POSTs a **signed callback** to your server. You verify the signature over the exact raw bytes, check that it belongs to a pending login you started, and mark it confirmed in one atomic step.
-5. The browser that holds the pending cookie polls **your** `/clientn/status`. When confirmed, your server consumes the pending login once, creates a **fresh** session id, and sets the app cookie.
+Every approval needs a fresh passkey check on clientn.com (fingerprint, face or device PIN), tied to that one request. Two flows, both in these apps:
 
-If the callback never arrives, the status route asks ClientN (`GET /api/v1/sessions/{id}` with your key), verifies the signed answer the same way, and carries on. You can also call `POST /api/v1/sessions/{id}/redeliver` within 30 minutes.
+**Same-device sign-in (default, recommended)**
+1. The button POSTs `{"flow":"redirect"}` to your `/clientn/session`. Your server makes a random `code_verifier`, keeps it **server-side, bound to this browser's pending cookie**, and calls `POST /api/v1/sessions` with `flow`, `return_url` and `code_challenge = base64url(SHA-256(verifier))`.
+2. The browser goes to ClientN, the person confirms with their passkey, and ClientN sends the browser back to `/clientn/return?cn_session=…&cn_code=…`.
+3. Your server claims the pending row for **this** browser once, calls `POST /api/v1/sessions/{id}/exchange` with the code and verifier, verifies the signature over `result_raw`, and starts a fresh app session. A forwarded confirm link signs nobody in: the code lands in the approver's browser, and only the starting browser has the verifier.
+
+**QR sign-in (a phone confirms for a computer)** — the "Use my phone instead" link
+1. Your server calls `POST /api/v1/sessions` with `flow: "qr"` plus `end_user_ip` / `end_user_agent`, stores a pending login bound to this browser, and returns the QR + code.
+2. On the phone the person sees "Chrome on Windows · Egypt" (with a warning when countries differ), picks the code shown on your page out of three (one wrong pick cancels), and confirms with their passkey.
+3. ClientN POSTs a **signed callback**. You verify the exact raw bytes, check it belongs to a pending login you started, and mark it confirmed in one atomic step.
+4. The browser that holds the pending cookie polls **your** `/clientn/status`, consumes the pending login once, and gets a **fresh** session id.
 
 ## Run it
 
@@ -42,7 +47,7 @@ Both apps are tested against the same list: cross-site start is refused (login C
 
 ## Things to know
 
-- **Status semantics.** ClientN's public status (`pending`, `confirmed`, `expired`) only says the person tapped Confirm. Your app is logged in only after *your server* accepted the signed callback. That is why `clientn.js` polls your `data-status-endpoint`, not ClientN.
+- **Status semantics.** ClientN's public status (`pending`, `confirmed`, `expired`) only says the person approved with a passkey. Your app is logged in only after *your server* accepted the signed callback. That is why `clientn.js` polls your `data-status-endpoint`, not ClientN.
 - **Callback retries.** ClientN tries 3 times, 5 seconds each. Answer 2xx as soon as the event is recorded. A repeat of the same event should also get 2xx and have no second effect.
 - **Keys.** One key and secret per site. There are **no scopes** yet: a key can start sessions, read your own sessions, redeliver, and send messages for that one site. **Rotate** on <https://clientn.com/dev> ("Rotate API key + secret"): the old pair stops working at once, and sign-ins in progress must be restarted. Store keys in your secret store, never in the repository.
 - **`verified_human`.** An authenticated claim from ClientN, not by itself proof that two accounts are different people. Do not let it override your own authorization rules.

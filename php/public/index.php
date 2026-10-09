@@ -13,7 +13,7 @@ foreach ($_SERVER as $k => $v) { if (str_starts_with($k, 'HTTP_')) { $headers[st
 $app = new App($cfg, new Store(getenv('DB_PATH') ?: __DIR__ . '/../data/app.sqlite'), new ClientN($base, $apiKey));
 $res = $app->handle([
     'method' => $_SERVER['REQUEST_METHOD'], 'path' => parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH) ?: '/',
-    'headers' => $headers, 'cookies' => $_COOKIE, 'body' => file_get_contents('php://input', false, null, 0, 16385) ?: '', 'ip' => $_SERVER['REMOTE_ADDR'] ?? '?',
+    'headers' => $headers, 'cookies' => $_COOKIE, 'body' => file_get_contents('php://input', false, null, 0, 16385) ?: '', 'ip' => $_SERVER['REMOTE_ADDR'] ?? '?', 'query' => $_GET,
 ]);
 http_response_code($res['code']);
 foreach ($res['headers'] as $k => $v) { header("$k: $v"); }

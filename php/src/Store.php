@@ -15,20 +15,22 @@ final class Store
               session_id TEXT NOT NULL UNIQUE,      -- ClientN session id; UNIQUE = one pending row per provider session
               created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL,
               status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','confirmed','consumed')),
-              clientn_id TEXT, verified_human INTEGER, verified_until TEXT);
+              clientn_id TEXT, verified_human INTEGER, verified_until TEXT,
+              verifier TEXT);                       -- redirect flow only: PKCE code_verifier, server-side, bound to this browser's token
             CREATE TABLE IF NOT EXISTS users (clientn_id TEXT PRIMARY KEY, first_seen INTEGER NOT NULL, last_login INTEGER NOT NULL, verified_human INTEGER NOT NULL DEFAULT 0);
             CREATE TABLE IF NOT EXISTS app_sessions (id_hash TEXT PRIMARY KEY, clientn_id TEXT NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL);
         ");
+        try { $this->db->exec('ALTER TABLE pending_logins ADD COLUMN verifier TEXT'); } catch (PDOException) { /* already there */ }
     }
 
     public static function token(): string { return rtrim(strtr(base64_encode(random_bytes(32)), '+/', '-_'), '='); }
     private static function h(string $s): string { return hash('sha256', $s); }
 
     /** @return array{token:string,createdAt:int,expiresAt:int} */
-    public function createPending(string $sessionId, int $ttl = 300): array
+    public function createPending(string $sessionId, int $ttl = 300, ?string $verifier = null): array
     {
         $token = self::token(); $t = time();
-        $this->db->prepare('INSERT INTO pending_logins (token_hash, session_id, created_at, expires_at) VALUES (?,?,?,?)')->execute([self::h($token), $sessionId, $t, $t + $ttl]);
+        $this->db->prepare('INSERT INTO pending_logins (token_hash, session_id, created_at, expires_at, verifier) VALUES (?,?,?,?,?)')->execute([self::h($token), $sessionId, $t, $t + $ttl, $verifier]);
         $this->db->prepare('DELETE FROM pending_logins WHERE expires_at < ?')->execute([$t - 3600]);
         return ['token' => $token, 'createdAt' => $t, 'expiresAt' => $t + $ttl];
     }
@@ -49,6 +51,16 @@ final class Store
         $st->execute([self::h($token)]);
         return $st->rowCount() === 1;
     }
+    /** Redirect flow: the row (with its verifier) goes only to the browser that started this session, once. */
+    public function claimRedirect(string $token, string $sessionId, ?int $t = null): ?array
+    {
+        $row = $this->pendingByToken($token);
+        if (!$row || $row['session_id'] !== $sessionId) { return null; }
+        $st = $this->db->prepare("UPDATE pending_logins SET status='consumed' WHERE token_hash=? AND session_id=? AND verifier IS NOT NULL AND status='pending' AND expires_at + 30 >= CAST(? AS INTEGER)");
+        $st->execute([self::h($token), $sessionId, $t ?? time()]);
+        return $st->rowCount() === 1 ? $row : null;
+    }
+
     public function startAppSession(string $clientnId, bool $verified, int $ttl = 604800): string
     {
         $t = time();

@@ -1,14 +1,14 @@
 import http from 'node:http';
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHmac, createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { loadConfig, assertConfig } from './config.mjs';
 import { openStore } from './store.mjs';
-import { createClientNSession, getClientNSession } from './clientn.mjs';
+import { createClientNSession, getClientNSession, exchangeClientNSession } from './clientn.mjs';
 import { verifyClientNCallback } from './verify.mjs';
 
 const MAX_CALLBACK_BYTES = 16384;
 
-export function createApp(cfg, store, api = { createClientNSession, getClientNSession }) {
+export function createApp(cfg, store, api = { createClientNSession, getClientNSession, exchangeClientNSession }) {
   const P = cfg.secureCookies ? '__Host-' : '';
   const PENDING = P + 'cn_pending', SESSION = P + 'app_session';
   const recoveryTried = new Map();          // session_id -> last recovery attempt (unix s)
@@ -101,10 +101,45 @@ export function createApp(cfg, store, api = { createClientNSession, getClientNSe
         const hits = (startHits.get(ip) || []).filter(x => x > t - 60);
         if (hits.length >= 10) return send(res, 429, { error: 'rate_limited' });
         startHits.set(ip, [...hits, t]);
-        const s = await api.createClientNSession(cfg);
-        const p = store.createPending(s.session_id);
-        return send(res, 201, { session_id: s.session_id, confirm_url: s.confirm_url, qr_png_base64: s.qr_png_base64, match_code: s.match_code, expires_at: s.expires_at },
-          'application/json', { 'Set-Cookie': cookieHeader(PENDING, p.token, 600) });
+        // {"flow":"redirect"} = same device (the button's default); {"flow":"qr"} or no body = phone confirms by QR
+        const rawIn = await readRaw(req, 1024);
+        let flow = 'qr';
+        try { if (rawIn && rawIn.length && JSON.parse(rawIn.toString('utf8'))?.flow === 'redirect') flow = 'redirect'; } catch { /* treat as qr */ }
+        // tell ClientN which device asked, so the person sees "Chrome on Windows · Egypt" on the confirm page
+        const opts = { flow, end_user_ip: req.socket.remoteAddress || undefined, end_user_agent: String(req.headers['user-agent'] || '').slice(0, 300) };
+        let verifier = null;
+        if (flow === 'redirect') {
+          verifier = randomBytes(32).toString('base64url');                       // stays on this server, bound to this browser
+          opts.return_url = cfg.appOrigin + '/clientn/return';
+          opts.code_challenge = createHash('sha256').update(verifier).digest('base64url');
+        }
+        const s = await api.createClientNSession(cfg, opts);
+        const p = store.createPending(s.session_id, 300, verifier);
+        const out = flow === 'redirect'
+          ? { session_id: s.session_id, flow, confirm_url: s.confirm_url }
+          : { session_id: s.session_id, flow, confirm_url: s.confirm_url, qr_png_base64: s.qr_png_base64, match_code: s.match_code, expires_at: s.expires_at };
+        return send(res, 201, out, 'application/json', { 'Set-Cookie': cookieHeader(PENDING, p.token, 600) });
+      }
+
+      // 1b. redirect flow: ClientN sends the browser back with a one-time code. Only the browser holding the
+      //     pending cookie has the verifier, so a forwarded confirm link signs nobody in.
+      if (req.method === 'GET' && url.pathname === '/clientn/return') {
+        const fail = () => send(res, 303, '', 'text/plain', { Location: '/?signin=failed', 'Set-Cookie': cookieHeader(PENDING, '', 0) });
+        const sid = url.searchParams.get('cn_session') || '', code = url.searchParams.get('cn_code') || '';
+        const token = cookies[PENDING];
+        if (!token || !/^[0-9a-f-]{36}$/.test(sid) || !/^[A-Za-z0-9_-]{20,64}$/.test(code)) return fail();
+        const row = store.claimRedirect(token, sid);
+        if (!row) return fail();
+        let r;
+        try { r = await api.exchangeClientNSession(cfg, sid, code, row.verifier); } catch { return fail(); }
+        if (r.status !== 200 || typeof r.body?.result_raw !== 'string') return fail();
+        let ev;
+        try {
+          ev = verifyClientNCallback(Buffer.from(r.body.result_raw, 'utf8'), r.body.signature, cfg.apiSecret,
+            { sessionId: sid, createdAt: row.created_at, expiresAt: row.expires_at });
+        } catch { return fail(); }
+        const appSid = store.startAppSession(ev.clientnId, !!ev.verifiedHuman);         // fresh session id
+        return send(res, 303, '', 'text/plain', { Location: '/', 'Set-Cookie': [cookieHeader(SESSION, appSid, 7 * 86400), cookieHeader(PENDING, '', 0)] });
       }
 
       // 2. callback from ClientN (server to server; no cookies, exact raw bytes are signed)
