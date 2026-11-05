@@ -63,7 +63,7 @@ components:
       properties:
         session_id: { type: string, format: uuid }
         clientn_id: { type: string, pattern: "^CN-[A-Z2-7]{12}$", description: "Anonymous, stable per person AND per site" }
-        verified_human: { type: boolean, description: "An authenticated claim, not proof of uniqueness by itself" }
+        verified_human: { type: boolean, description: "Always false since 2026-11-05 (ClientN no longer checks ID documents or faces). Kept for compatibility; do not use it for decisions." }
         verified_until: { type: string, nullable: true }
         match_code: { type: string }
         ts: { type: integer, description: Unix seconds when the person confirmed }

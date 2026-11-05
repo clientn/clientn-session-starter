@@ -60,7 +60,7 @@ t('valid callback -> 200', cb($app, ev($b['sid']))['code'] === 200);
 $sess = cookieVal($r, 'app_session');
 t('status confirmed -> fresh app session cookie (HttpOnly)', $s === 'confirmed' && strlen((string)$sess) > 30 && str_contains(implode('|', $r['cookies']), 'HttpOnly'));
 $home = $app->handle(req('GET', '/', ['cookies' => ['app_session' => $sess]]))['body'];
-t('home shows the anonymous CN- id and no badge', str_contains($home, 'CN-ABCDEFGHIJKL') && str_contains($home, 'badge: <strong>no'));
+t('home shows the anonymous CN- id and no badge', str_contains($home, 'CN-ABCDEFGHIJKL') && str_contains($home, 'field (always false since 2026-11-05): <strong>no'));
 
 // --- callback refusals
 [$app, $store, $api] = boot(); $b = begin($app, $api); $raw = ev($b['sid']);

@@ -85,7 +85,7 @@ export function createApp(cfg, store, api = { createClientNSession, getClientNSe
           ? `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Signed in</title>
              <body style="font-family:system-ui;max-width:560px;margin:60px auto;padding:0 16px;color:#0f172a;background:#fff">
              <h1>You are signed in</h1><p>Your anonymous ID on this site: <strong>${me.clientnId}</strong></p>
-             <p>Verified human badge: <strong>${me.verifiedHuman ? 'yes' : 'no'}</strong></p>
+             <p>verified_human field (always false since 2026-11-05): <strong>${me.verifiedHuman ? 'yes' : 'no'}</strong></p>
              <form method="post" action="/logout"><button style="padding:10px 18px">Sign out</button></form></body>`
           : `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sign in</title>
              <body style="font-family:system-ui;max-width:560px;margin:60px auto;padding:0 16px;color:#0f172a;background:#fff">

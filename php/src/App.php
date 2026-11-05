@@ -89,7 +89,7 @@ final class App
                 $me = isset($ck[$this->sessionName]) ? $this->store->appSession($ck[$this->sessionName]) : null;
                 $head = '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ClientN starter</title><body style="font-family:system-ui;max-width:560px;margin:60px auto;padding:0 16px;color:#0f172a;background:#fff">';
                 $html = $me
-                    ? $head . '<h1>You are signed in</h1><p>Your anonymous ID on this site: <strong>' . htmlspecialchars($me['clientnId']) . '</strong></p><p>Verified human badge: <strong>' . ($me['verifiedHuman'] ? 'yes' : 'no') . '</strong></p><form method="post" action="/logout"><button style="padding:10px 18px">Sign out</button></form></body>'
+                    ? $head . '<h1>You are signed in</h1><p>Your anonymous ID on this site: <strong>' . htmlspecialchars($me['clientnId']) . '</strong></p><p>verified_human field (always false since 2026-11-05): <strong>' . ($me['verifiedHuman'] ? 'yes' : 'no') . '</strong></p><form method="post" action="/logout"><button style="padding:10px 18px">Sign out</button></form></body>'
                     : $head . '<h1>Welcome</h1><p>No passwords. Sign in with ClientN.</p><div id="clientn-signin"></div><script src="' . htmlspecialchars($this->cfg['apiBase']) . '/clientn.js" data-endpoint="/clientn/session" data-status-endpoint="/clientn/status" data-target="#clientn-signin" data-redirect="/"></script></body>';
                 return $this->out(200, $html, 'text/html; charset=utf-8');
             }

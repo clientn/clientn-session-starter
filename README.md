@@ -50,7 +50,7 @@ Both apps are tested against the same list: cross-site start is refused (login C
 - **Status semantics.** ClientN's public status (`pending`, `confirmed`, `expired`) only says the person approved with a passkey. Your app is logged in only after *your server* accepted the signed callback. That is why `clientn.js` polls your `data-status-endpoint`, not ClientN.
 - **Callback retries.** ClientN tries 3 times, 5 seconds each. Answer 2xx as soon as the event is recorded. A repeat of the same event should also get 2xx and have no second effect.
 - **Keys.** One key and secret per site. There are **no scopes** yet: a key can start sessions, read your own sessions, redeliver, and send messages for that one site. **Rotate** on <https://clientn.com/dev> ("Rotate API key + secret"): the old pair stops working at once, and sign-ins in progress must be restarted. Store keys in your secret store, never in the repository.
-- **`verified_human`.** An authenticated claim from ClientN, not by itself proof that two accounts are different people. Do not let it override your own authorization rules.
+- **`verified_human`.** Always `false` since 2026-11-05. ClientN switched off ID-document and face checks for good, and does not check identity documents, so it cannot prove that two accounts belong to different people. The field stays in the callback so existing integrations keep working. Do not use it for decisions.
 - **Identity.** `clientn_id` is stable for one person on your site and different on every other site.
 - **Shared limits.** These apps keep their tiny rate limiter in memory. Use your real shared limiter in production.
 

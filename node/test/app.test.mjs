@@ -80,7 +80,7 @@ test('full login: callback -> status confirmed -> signed in with a fresh session
   assert.ok(sess && sess.length > 30);
   assert.match(r.headers.getSetCookie().find(c => c.startsWith('app_session=')), /HttpOnly/);
   const home = await fetch(app.base + '/', { headers: { Cookie: sess } }).then(x => x.text());
-  assert.match(home, /CN-ABCDEFGHIJKL/); assert.match(home, /badge: <strong>no/);
+  assert.match(home, /CN-ABCDEFGHIJKL/); assert.match(home, /field \(always false since 2026-11-05\): <strong>no/);
   app.close();
 });
 
