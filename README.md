@@ -4,7 +4,7 @@ Working "Sign in with ClientN" integrations for **Node.js** and **PHP**, with te
 
 ClientN gives your visitors an anonymous, per-site ID (`CN-…`) after they confirm with a passkey on clientn.com. No app, no password, no email address reaches you. Docs: <https://clientn.com/docs> · Live demo: <https://clientn.com/demo> · API description: [`openapi.yaml`](openapi.yaml)
 
-> Run a small site and want it set up for you? The partner offer includes free setup within 48 hours and a free first year of ClientN membership for your users (one per person and email inbox): <https://clientn.com/partners.html>
+> Run a small site and want it set up for you? The partner offer includes free setup within 48 hours and free ClientN membership through 31 December 2028 for your users (one per person and email inbox): <https://clientn.com/partners.html>
 
 > This is a reference integration, not an SDK. Signing someone in needs **server-side work in your app** (create a session, receive a signed callback, log the right browser in). These two apps show a complete, tested way to do it. They are small on purpose: read them.
 
