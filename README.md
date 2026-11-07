@@ -2,7 +2,7 @@
 
 Working "Sign in with ClientN" integrations for **Node.js** and **PHP**, with tests. Copy one of them, put in your keys, and adapt the storage to your own app.
 
-ClientN gives your visitors an anonymous, per-site ID (`CN-…`) after they confirm with a passkey on clientn.com. No app, no password, no email address reaches you. Docs: <https://clientn.com/docs> · Live demo: <https://clientn.com/demo> · API description: [`openapi.yaml`](openapi.yaml)
+ClientN gives your visitors an anonymous, per-site ID (`CN-…`) after they sign in with fingerprint or face (a passkey, no password) on clientn.com. No app, no password, no email address reaches you. Docs: <https://clientn.com/docs> · Live demo: <https://clientn.com/demo> · API description: [`openapi.yaml`](openapi.yaml)
 
 > Run a small site and want it set up for you? The partner offer includes free setup within 48 hours and free ClientN membership through 31 December 2028 for your users (one per person and email inbox): <https://clientn.com/partners.html>
 
@@ -56,13 +56,13 @@ Both apps are tested against the same list: cross-site start is refused (login C
 - **Identity.** `clientn_id` is stable for one person on your site and different on every other site.
 - **Shared limits.** These apps keep their tiny rate limiter in memory. Use your real shared limiter in production.
 
-## Private messages (paid members)
+## Private messages (members)
 
-A member who signed in to your site can receive private messages from you through ClientN, without you ever seeing their email address. See [`node/examples/send-message.mjs`](node/examples/send-message.mjs) and [`php/examples/send-message.php`](php/examples/send-message.php).
+Membership is free for everyone until 31 December 2027, then $10 a year. A member who signed in to your site can receive private messages from you through ClientN, without you ever seeing their email address. See [`node/examples/send-message.mjs`](node/examples/send-message.mjs) and [`php/examples/send-message.php`](php/examples/send-message.php).
 
 - Requests are signed: header `X-ClientN-Signature` = hex HMAC-SHA256(secret, the exact body you send), plus a fresh `ts` and a unique `idempotency_key`.
 - `202 accepted` says nothing about delivery. Ask `GET /api/v1/messages/{id}` later: `delivered`, `queued` or `not_delivered`.
-- **Blocking.** The member can block your site at any time in their ClientN inbox. After that, your sends still return `202`, and the status becomes `not_delivered`. ClientN never tells you why (blocked, not a paying member, or no consent look identical), so nobody can be probed.
+- **Blocking.** The member can block your site at any time in their ClientN inbox. After that, your sends still return `202`, and the status becomes `not_delivered`. ClientN never tells you why (blocked, not a member, or no consent look identical), so nobody can be probed.
 - Categories: `service` (about their account with you) and `updates` (only after the member opts in).
 
 ## Continuous integration
