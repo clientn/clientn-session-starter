@@ -14,12 +14,12 @@ Every approval needs a fresh passkey check on clientn.com (fingerprint, face or 
 
 **Same-device sign-in (default, recommended)**
 1. The button POSTs `{"flow":"redirect"}` to your `/clientn/session`. Your server makes a random `code_verifier`, keeps it **server-side, bound to this browser's pending cookie**, and calls `POST /api/v1/sessions` with `flow`, `return_url` and `code_challenge = base64url(SHA-256(verifier))`.
-2. The browser goes to ClientN, the person confirms with their passkey, and ClientN sends the browser back to `/clientn/return?cn_session=…&cn_code=…`.
+2. The browser goes to ClientN, the person confirms with their passkey (no number matching on this flow: the one-time code is already bound to the browser that started it), and ClientN sends the browser back to `/clientn/return?cn_session=…&cn_code=…`.
 3. Your server claims the pending row for **this** browser once, calls `POST /api/v1/sessions/{id}/exchange` with the code and verifier, verifies the signature over `result_raw`, and starts a fresh app session. A forwarded confirm link signs nobody in: the code lands in the approver's browser, and only the starting browser has the verifier.
 
 **QR sign-in (a phone confirms for a computer)** — the "Use my phone instead" link
 1. Your server calls `POST /api/v1/sessions` with `flow: "qr"` plus `end_user_ip` / `end_user_agent`, stores a pending login bound to this browser, and returns the QR + code.
-2. On the phone the person sees "Chrome on Windows · Egypt" (with a warning when countries differ), picks the code shown on your page out of three (one wrong pick cancels), and confirms with their passkey.
+2. On the phone the person sees "Chrome on Windows · Egypt" (with a warning when countries differ), picks the code shown on your page out of three (number matching is QR-only; one wrong pick cancels), and confirms with their passkey.
 3. ClientN POSTs a **signed callback**. You verify the exact raw bytes, check it belongs to a pending login you started, and mark it confirmed in one atomic step.
 4. The browser that holds the pending cookie polls **your** `/clientn/status`, consumes the pending login once, and gets a **fresh** session id.
 
