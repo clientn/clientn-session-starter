@@ -63,6 +63,7 @@ Membership is free for everyone until 31 December 2027, then $10 a year. A membe
 - Requests are signed: header `X-ClientN-Signature` = hex HMAC-SHA256(secret, the exact body you send), plus a fresh `ts` and a unique `idempotency_key`.
 - `202 accepted` says nothing about delivery. Ask `GET /api/v1/messages/{id}` later: `delivered`, `queued` or `not_delivered`.
 - **Blocking.** The member can block your site at any time in their ClientN inbox. After that, your sends still return `202`, and the status becomes `not_delivered`. ClientN never tells you why (blocked, not a member, or no consent look identical), so nobody can be probed.
+- **Email alert.** When a message is delivered, the member gets a short email alert from ClientN (no message content), which they can turn off for all sites or for one site. It is limited to 1 per site per hour and 10 a day. You never see the member's email address, you are not told whether an alert was sent, and the API response is the same either way.
 - Categories: `service` (about their account with you) and `updates` (only after the member opts in).
 
 ## Continuous integration
